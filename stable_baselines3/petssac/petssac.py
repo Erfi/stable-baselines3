@@ -1,4 +1,4 @@
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
 import numpy as np
 import torch as th
@@ -7,7 +7,9 @@ from torch.nn import functional as F
 from gym.envs.mujoco.mujoco_env import MujocoEnv
 from stable_baselines3.sac import SAC
 from stable_baselines3.common import logger
+from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.utils import polyak_update
+
 from PETS.env.cartpole import CartpoleEnv
 from PETS.defaults import get_cartpole_defaults
 from PETS.MPC import MPC
@@ -20,7 +22,9 @@ class PETSSAC(SAC):
         super().__init__(*args, **kwargs)
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
-        # TODO: Is it time to train/retrain the PETS model? Call a self.train_mbctrl() here
+        print(f"num_timesteps: {self.num_timesteps}")
+        # train / retrain the PETS' dynamic model
+        self.train_mbctrl()
         # Update optimizers learning rate
         optimizers = [self.actor.optimizer, self.critic.optimizer]
         if self.ent_coef_optimizer is not None:
@@ -39,6 +43,10 @@ class PETSSAC(SAC):
             # We need to sample because `log_std` may have changed between two gradient steps
             if self.use_sde:
                 self.actor.reset_noise()
+
+            # PETS' suggested actions for observations
+            actions_mb = self.mbctrl.act(replay_data.observations)
+            actions_mb = th.from_numpy(self.policy.scale_action(actions_mb)).float()
 
             # Action by the current actor for the sampled state
             actions_pi, log_prob = self.actor.action_log_prob(replay_data.observations)
@@ -93,7 +101,8 @@ class PETSSAC(SAC):
             # Mean over all critic networks
             q_values_pi = th.cat(self.critic.forward(replay_data.observations, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
-            actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
+            petssac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none")
+            actor_loss = (ent_coef * log_prob - min_qf_pi + petssac_loss).mean()
             actor_losses.append(actor_loss.item())
 
             # Optimize the actor
@@ -116,6 +125,8 @@ class PETSSAC(SAC):
 
     def _get_env_from_args_kwargs(self, args: List, kwargs: Dict) -> MujocoEnv:
         env = args[1] if len(args) >= 2 else kwargs.get("env", None)
+        if isinstance(env, DummyVecEnv):
+            env = env._get_target_envs(indices=0)[0]
         assert isinstance(env, MujocoEnv), "Need an instance of MujocoEnv class"
         return env
 
@@ -125,3 +136,58 @@ class PETSSAC(SAC):
             mbctrl_params = get_cartpole_defaults()
             mbctrl = MPC(mbctrl_params)
         return mbctrl
+
+    def train_mbctrl(self):
+        if self.num_timesteps == self.learning_starts + 1:  # first training call
+            batch_size = self.learning_starts
+        elif self.num_timesteps % 5000 == 0:  # periodic update of the dynamics model
+            self.mbctrl.model_train_cfg["epochs"] = 1
+            batch_size = self.batch_size
+        else:
+            return
+        samples = self.replay_buffer.sample(batch_size)
+        self.mbctrl.train(obs=samples.observations, next_obs=samples.next_observations, actions=samples.actions)
+
+    def _excluded_save_params(self) -> List[str]:
+        """
+        Returns the names of the parameters that should be excluded from being
+        saved by pickling. E.g. replay buffers are skipped by default
+        as they take up a lot of space. PyTorch variables should be excluded
+        with this so they can be stored with ``th.save``.
+
+        :return: List of parameters that should be excluded from being saved with pickle.
+        """
+        return super(SAC, self)._excluded_save_params() + [
+            "actor",
+            "critic",
+            "critic_target",
+            "mbctrl",
+        ]
+
+    def _get_torch_save_params(self) -> Tuple[List[str], List[str]]:
+        """
+        Get the name of the torch variables that will be saved with
+        PyTorch ``th.save``, ``th.load`` and ``state_dicts`` instead of the default
+        pickling strategy. This is to handle device placement correctly.
+
+        Names can point to specific variables under classes, e.g.
+        "policy.optimizer" would point to ``optimizer`` object of ``self.policy``
+        if this object.
+
+        :return:
+            List of Torch variables whose state dicts to save (e.g. th.nn.Modules),
+            and list of other Torch variables to store with ``th.save``.
+        """
+        state_dicts = [
+            "policy",
+            "actor.optimizer",
+            "critic.optimizer",
+            "mbctrl.model",
+            "mbctrl.model.optim",
+        ]
+        saved_pytorch_variables = ["log_ent_coef", "mbctrl.has_been_trained"]
+        if self.ent_coef_optimizer is not None:
+            state_dicts.append("ent_coef_optimizer")
+        else:
+            saved_pytorch_variables.append("ent_coef_tensor")
+        return state_dicts, saved_pytorch_variables
