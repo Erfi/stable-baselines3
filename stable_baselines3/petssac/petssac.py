@@ -16,11 +16,11 @@ from PETS.MPC import MPC
 
 
 class PETSSAC(SAC):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, petssac_coef=1.0, *args, **kwargs):
+        self.petssac_coef = petssac_coef
         self.env = self._get_from_args_kwargs(
             args, kwargs, argidx=1, argname="env", argisinstance=(MujocoEnv, DummyVecEnv)
         )
-        self.petssac_coef = self._get_from_args_kwargs(args, kwargs, argname="petssac_coef", pop=True)
         self.mbctrl = self._get_mbctrl()
         super().__init__(*args, **kwargs)
 
@@ -204,7 +204,7 @@ class PETSSAC(SAC):
             "mbctrl.model",
             "mbctrl.model.optim",
         ]
-        saved_pytorch_variables = ["log_ent_coef", "mbctrl.has_been_trained"]
+        saved_pytorch_variables = ["log_ent_coef", "mbctrl.has_been_trained", "petssac_coef"]
         if self.ent_coef_optimizer is not None:
             state_dicts.append("ent_coef_optimizer")
         else:
