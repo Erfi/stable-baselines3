@@ -1,4 +1,4 @@
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Any
 
 import numpy as np
 import torch as th
@@ -17,7 +17,10 @@ from PETS.MPC import MPC
 
 class PETSSAC(SAC):
     def __init__(self, *args, **kwargs):
-        self.env = self._get_env_from_args_kwargs(args, kwargs)
+        self.env = self._get_from_args_kwargs(
+            args, kwargs, argidx=1, argname="env", argisinstance=(MujocoEnv, DummyVecEnv)
+        )
+        self.petssac_coef = self._get_from_args_kwargs(args, kwargs, argname="petssac_coef", pop=True)
         self.mbctrl = self._get_mbctrl()
         super().__init__(*args, **kwargs)
 
@@ -102,7 +105,7 @@ class PETSSAC(SAC):
             q_values_pi = th.cat(self.critic.forward(replay_data.observations, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
             petssac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none")
-            actor_loss = (ent_coef * log_prob - min_qf_pi + petssac_loss).mean()
+            actor_loss = (ent_coef * log_prob - min_qf_pi).mean() + self.petssac_coef * petssac_loss.mean()
             actor_losses.append(actor_loss.item())
 
             # Optimize the actor
@@ -123,16 +126,32 @@ class PETSSAC(SAC):
         if len(ent_coef_losses) > 0:
             logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
 
-    def _get_env_from_args_kwargs(self, args: List, kwargs: Dict) -> MujocoEnv:
-        env = args[1] if len(args) >= 2 else kwargs.get("env", None)
-        if isinstance(env, DummyVecEnv):
-            env = env._get_target_envs(indices=0)[0]
-        assert isinstance(env, MujocoEnv), "Need an instance of MujocoEnv class"
-        return env
+    def _get_from_args_kwargs(
+        self,
+        args: List,
+        kwargs: Dict,
+        argidx: int = None,
+        argname: str = None,
+        argisinstance: Any = None,
+        pop: bool = False,
+    ) -> Any:
+        """
+        Returns the desired argument from args (using argidx) and kwargs (using argname).
+        Priority is with args if not found kwargs.
+        """
+        arg = None
+        if argidx and len(args) > argidx:
+            arg = args.pop(argidx) if pop else args[argidx]
+        else:
+            arg = kwargs.pop(argname, None) if pop else kwargs.get(argname, None)
+        if argisinstance:
+            assert isinstance(arg, argisinstance), f"Need an instance of {argisinstance}"
+        return arg
 
     def _get_mbctrl(self) -> MPC:
         mbctrl = None
-        if isinstance(self.env, CartpoleEnv):
+        env = self.env.envs[0] if isinstance(self.env, DummyVecEnv) else self.env
+        if isinstance(env, CartpoleEnv):
             mbctrl_params = get_cartpole_defaults()
             mbctrl = MPC(mbctrl_params)
         return mbctrl
