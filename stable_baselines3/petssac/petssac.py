@@ -9,6 +9,8 @@ from stable_baselines3.sac import SAC
 from stable_baselines3.common import logger
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.utils import polyak_update
+from stable_baselines3.common.monitor import Monitor
+
 
 from PETS.env.cartpole import CartpoleEnv
 from PETS.defaults import get_cartpole_defaults
@@ -16,10 +18,10 @@ from PETS.MPC import MPC
 
 
 class PETSSAC(SAC):
-    def __init__(self, petssac_coef=1.0, *args, **kwargs):
+    def __init__(self, petssac_coef: float = 1.0, *args, **kwargs):
         self.petssac_coef = petssac_coef
         self.env = self._get_from_args_kwargs(
-            args, kwargs, argidx=1, argname="env", argisinstance=(MujocoEnv, DummyVecEnv)
+            args, kwargs, argidx=1, argname="env", argisinstance=(MujocoEnv, DummyVecEnv, Monitor)
         )
         self.mbctrl = self._get_mbctrl()
         super().__init__(*args, **kwargs)
@@ -37,7 +39,7 @@ class PETSSAC(SAC):
         self._update_learning_rate(optimizers)
 
         ent_coef_losses, ent_coefs = [], []
-        actor_losses, critic_losses = [], []
+        actor_losses, critic_losses, petssac_losses = [], [], []
 
         for gradient_step in range(gradient_steps):
             # Sample replay buffer
@@ -104,9 +106,12 @@ class PETSSAC(SAC):
             # Mean over all critic networks
             q_values_pi = th.cat(self.critic.forward(replay_data.observations, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
-            petssac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none")
-            actor_loss = (ent_coef * log_prob - min_qf_pi).mean() + self.petssac_coef * petssac_loss.mean()
+            petssac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none").mean()
+            sac_actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
+            actor_loss = sac_actor_loss + self.petssac_coef * petssac_loss
+
             actor_losses.append(actor_loss.item())
+            petssac_losses.append(petssac_loss.item())
 
             # Optimize the actor
             self.actor.optimizer.zero_grad()
@@ -123,6 +128,7 @@ class PETSSAC(SAC):
         logger.record("train/ent_coef", np.mean(ent_coefs))
         logger.record("train/actor_loss", np.mean(actor_losses))
         logger.record("train/critic_loss", np.mean(critic_losses))
+        logger.record("train/petssac_loss", np.mean(petssac_losses))
         if len(ent_coef_losses) > 0:
             logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
 
@@ -149,8 +155,19 @@ class PETSSAC(SAC):
         return arg
 
     def _get_mbctrl(self) -> MPC:
+        """
+        We want to pass to the MPC the original env without the wrappers
+        """
         mbctrl = None
-        env = self.env.envs[0] if isinstance(self.env, DummyVecEnv) else self.env
+        env = self.env
+        if isinstance(self.env, Monitor):
+            env = self.env.env
+        elif isinstance(self.env, DummyVecEnv):
+            env = self.env.envs[0].env
+            if isinstance(env, Monitor):
+                env = env.env
+        else:
+            env = self.env
         if isinstance(env, CartpoleEnv):
             mbctrl_params = get_cartpole_defaults()
             mbctrl = MPC(mbctrl_params)
