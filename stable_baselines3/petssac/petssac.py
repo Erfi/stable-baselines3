@@ -18,8 +18,9 @@ from PETS.MPC import MPC
 
 
 class PETSSAC(SAC):
-    def __init__(self, petssac_coef: float = 1.0, *args, **kwargs):
+    def __init__(self, petssac_coef: float = 1.0, mbctrl_retrain_period: int = 5000, *args, **kwargs):
         self.petssac_coef = petssac_coef
+        self.mbctrl_retrain_period = mbctrl_retrain_period
         self.env = self._get_from_args_kwargs(
             args, kwargs, argidx=1, argname="env", argisinstance=(MujocoEnv, DummyVecEnv, Monitor)
         )
@@ -27,7 +28,6 @@ class PETSSAC(SAC):
         super().__init__(*args, **kwargs)
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
-        print(f"num_timesteps: {self.num_timesteps}")
         # train / retrain the PETS' dynamic model
         self.train_mbctrl()
         # Update optimizers learning rate
@@ -176,7 +176,7 @@ class PETSSAC(SAC):
     def train_mbctrl(self):
         if self.num_timesteps == self.learning_starts + 1:  # first training call
             batch_size = self.learning_starts
-        elif self.num_timesteps % 5000 == 0:  # periodic update of the dynamics model
+        elif self.num_timesteps % self.mbctrl_retrain_period == 0:  # periodic update of the dynamics model
             self.mbctrl.model_train_cfg["epochs"] = 1
             batch_size = self.batch_size
         else:
