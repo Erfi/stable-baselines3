@@ -88,6 +88,10 @@ class PETSSAC(SAC):
                 # td error + entropy term
                 q_backup = replay_data.rewards + (1 - replay_data.dones) * self.gamma * target_q
 
+                # q(s, PETS_action)
+                actions_mb_qs = th.cat(self.critic_target(replay_data.observations, actions_mb), dim=1)
+                actions_mb_q, _ = th.min(actions_mb_qs, dim=1, keepdim=True)
+
             # Get current Q estimates for each critic network
             # using action from the replay buffer
             current_q_estimates = self.critic(replay_data.observations, replay_data.actions)
@@ -106,7 +110,7 @@ class PETSSAC(SAC):
             # Mean over all critic networks
             q_values_pi = th.cat(self.critic.forward(replay_data.observations, actions_pi), dim=1)
             min_qf_pi, _ = th.min(q_values_pi, dim=1, keepdim=True)
-            petssac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none").mean()
+            petssac_loss = F.mse_loss(min_qf_pi, actions_mb_q, reduction="none").mean()
             sac_actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
             actor_loss = sac_actor_loss + self.petssac_coef * petssac_loss
 
