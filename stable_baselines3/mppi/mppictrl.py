@@ -26,7 +26,6 @@ class MPPICTRL(MBCTRL):
         lambda_,
         n_samples,
         horizon,
-        bootstrap=10,
         true_dynamics_model=None,
     ):
         self.state_dim = state_dim
@@ -91,10 +90,13 @@ class MPPICTRL(MBCTRL):
 
     def act(self, state):
         """
-        :param state: (nx) or (K x nx) current state, or samples of states (for propagating a distribution of states)
+        :param state: (nx) or (batch_size x nx) current state or sample of states
         :returns action: (nu) best action
         """
-        return self.ctrl.command(state)
+        if state.ndim == 1:
+            return self.ctrl.command(state)
+        actions = [self.ctrl.command(s) for s in state]
+        return torch.Tensor(actions).view(-1, self.action_dim)
 
     def _create_dynamics_model(self):
         network = torch.nn.Sequential(

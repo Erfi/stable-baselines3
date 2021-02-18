@@ -9,6 +9,7 @@ from stable_baselines3.sac import SAC
 from stable_baselines3.td3 import TD3
 from stable_baselines3.petssac import PETSSAC
 from stable_baselines3.mppi import MPPICTRL
+from stable_baselines3.mppisac import MPPISAC
 
 # Read version from file
 version_file = os.path.join(os.path.dirname(__file__), "version.txt")
