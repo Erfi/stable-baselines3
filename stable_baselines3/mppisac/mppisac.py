@@ -1,4 +1,4 @@
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Tuple
 
 import numpy as np
 import torch
@@ -11,50 +11,78 @@ from stable_baselines3.mppi import MPPICTRL
 
 
 class MPPISAC(SAC):
+    """
+    NOTE: Default values are set inorder to make the loading of the model to work properly.
+    """
+
     def __init__(
         self,
-        mppi_state_dim: int,
-        mppi_action_dim: int,
-        mppi_action_ub: float,
-        mppi_action_lb: float,
-        mppi_model_in_dim: Optional[int],
-        mppi_model_out_dim: Optional[int],
-        mppi_h_units: Optional[int],
-        mppi_state_preproc: Optional[Callable[[torch.Tensor], torch.Tensor]],
-        mppi_state_postproc: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]],
-        mppi_target_proc: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]],
-        mppi_cost_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor],
-        mppi_sigma: torch.Tensor,
+        mppi_state_dim: int = 2,
+        mppi_action_dim: int = 1,
+        mppi_action_ub: float = 1.0,
+        mppi_action_lb: float = -1.0,
+        mppi_model_in_dim: Optional[int] = 1,
+        mppi_model_out_dim: Optional[int] = 2,
+        mppi_h_units: Optional[int] = 10,
+        mppi_state_preproc: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
+        mppi_state_postproc: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        mppi_target_proc: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
+        mppi_cost_fn: Callable[[torch.Tensor, torch.Tensor], torch.Tensor] = lambda x, y: 1,
+        mppi_sigma: torch.Tensor = torch.tensor(1.0, dtype=torch.float),
         mppi_horizon: int = 10,
         mppi_n_samples: int = 100,
         mppi_lambda: float = 1.0,
         mppi_train_epoch: int = 1,
         mppi_true_dynamics_model: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
         mppisac_coef: float = 1.0,
+        _init_setup_model: bool = True,
         *args,
         **kwargs,
     ):
+        self.mppi_state_dim = mppi_state_dim
+        self.mppi_action_dim = mppi_action_dim
+        self.mppi_action_ub = mppi_action_ub
+        self.mppi_action_lb = mppi_action_lb
+        self.mppi_model_in_dim = mppi_model_in_dim
+        self.mppi_model_out_dim = mppi_model_out_dim
+        self.mppi_h_units = mppi_h_units
+        self.mppi_state_preproc = mppi_state_preproc
+        self.mppi_state_postproc = mppi_state_postproc
+        self.mppi_target_proc = mppi_target_proc
+        self.mppi_cost_fn = mppi_cost_fn
+        self.mppi_noise_sigma = mppi_sigma
+        self.mppi_horizon = mppi_horizon
+        self.mppi_n_samples = mppi_n_samples
+        self.mppi_lambda = mppi_lambda
+        self.mppi_train_epoch = mppi_train_epoch
+        self.mppi_true_dynamics_model = mppi_true_dynamics_model
+
         self.mppisac_coef = mppisac_coef
+        self.use_mppi_true_dynamics_model = True if self.mppi_true_dynamics_model else False
+
+        super().__init__(_init_setup_model=_init_setup_model, *args, **kwargs)
+
+    def _setup_model(self) -> None:
         self.mbctrl = MPPICTRL(
-            state_dim=mppi_state_dim,
-            action_dim=mppi_action_dim,
-            action_ub=mppi_action_ub,
-            action_lb=mppi_action_lb,
-            model_in_dim=mppi_model_in_dim,
-            model_out_dim=mppi_model_out_dim,
-            h_units=mppi_h_units,
-            state_preproc=mppi_state_preproc,
-            state_postproc=mppi_state_postproc,
-            target_proc=mppi_target_proc,
-            cost_fn=mppi_cost_fn,
-            noise_sigma=mppi_sigma,
-            horizon=mppi_horizon,
-            n_samples=mppi_n_samples,
-            lambda_=mppi_lambda,
-            train_epoch=mppi_train_epoch,
-            true_dynamics_model=mppi_true_dynamics_model,
+            state_dim=self.mppi_state_dim,
+            action_dim=self.mppi_action_dim,
+            action_ub=self.mppi_action_ub,
+            action_lb=self.mppi_action_lb,
+            model_in_dim=self.mppi_model_in_dim,
+            model_out_dim=self.mppi_model_out_dim,
+            h_units=self.mppi_h_units,
+            state_preproc=self.mppi_state_preproc,
+            state_postproc=self.mppi_state_postproc,
+            target_proc=self.mppi_target_proc,
+            cost_fn=self.mppi_cost_fn,
+            noise_sigma=self.mppi_noise_sigma,
+            horizon=self.mppi_horizon,
+            n_samples=self.mppi_n_samples,
+            lambda_=self.mppi_lambda,
+            train_epoch=self.mppi_train_epoch,
+            true_dynamics_model=self.mppi_true_dynamics_model,
         )
-        super().__init__(*args, **kwargs)
+        super()._setup_model()
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
         print(f"Progress remaining: {self._current_progress_remaining}")
@@ -169,4 +197,42 @@ class MPPISAC(SAC):
         if len(ent_coef_losses) > 0:
             logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
 
-    # TODO: override the saving for mppictrl. What needs to be saved?
+    def _excluded_save_params(self) -> List[str]:
+        """
+        Returns the names of the parameters that should be excluded from being
+        saved by pickling. E.g. replay buffers are skipped by default
+        as they take up a lot of space. PyTorch variables should be excluded
+        with this so they can be stored with ``th.save``.
+
+        :return: List of parameters that should be excluded from being saved with pickle.
+        """
+        return super()._excluded_save_params() + ["mbctrl"]
+
+    def _get_torch_save_params(self) -> Tuple[List[str], List[str]]:
+        """
+        Get the name of the torch variables that will be saved with
+        PyTorch ``th.save``, ``th.load`` and ``state_dicts`` instead of the default
+        pickling strategy. This is to handle device placement correctly.
+
+        Names can point to specific variables under classes, e.g.
+        "policy.optimizer" would point to ``optimizer`` object of ``self.policy``
+        if this object.
+
+        :return:
+            List of Torch variables whose state dicts to save (e.g. th.nn.Modules),
+            and list of other Torch variables to store with ``th.save``.
+        """
+        state_dicts = [
+            "policy",
+            "actor.optimizer",
+            "critic.optimizer",
+        ]
+        if not self.use_mppi_true_dynamics_model:
+            state_dicts.extend(["mbctrl.model", "mbctrl.optimizer"])  # mppi model is a torch nn model
+
+        saved_pytorch_variables = ["log_ent_coef"]
+        if self.ent_coef_optimizer is not None:
+            state_dicts.append("ent_coef_optimizer")
+        else:
+            saved_pytorch_variables.append("ent_coef_tensor")
+        return state_dicts, saved_pytorch_variables

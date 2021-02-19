@@ -45,6 +45,7 @@ class MPPICTRL(MBCTRL):
         self.n_samples = n_samples
         self.horizon = horizon
         self.model = true_dynamics_model if true_dynamics_model else self._create_dynamics_model()
+        self.optimizer = None if true_dynamics_model else torch.optim.Adam(self.model.parameters())
         self.use_true_dynamics_model = True if true_dynamics_model else False
         self.ctrl = self._create_MPPI_controller()
 
@@ -67,7 +68,6 @@ class MPPICTRL(MBCTRL):
         for param in self.model.parameters():
             param.requires_grad = True
 
-        self.optimizer = torch.optim.Adam(self.model.parameters())
         # loss_fn = torch.nn.MSELoss(reduction="sum")
         for epoch in range(self.train_epoch):
             # TODO: Add batch size here
