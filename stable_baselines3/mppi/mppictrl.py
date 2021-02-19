@@ -55,6 +55,8 @@ class MPPICTRL(MBCTRL):
         :param next_states: torch tensor (K, nx)
         :param acitons: torch tensor (K, nu)
         """
+        if self.use_true_dynamics_model:
+            return
 
         #  Construct new training points and add to training set
         X = torch.cat([self.state_preproc(states), actions], dim=-1)
