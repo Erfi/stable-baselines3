@@ -12,7 +12,7 @@ from stable_baselines3.mppi import MPPICTRL
 
 class MPPISAC(SAC):
     """
-    NOTE: Default values are set inorder to make the loading of the model to work properly.
+    NOTE: Default values are set in order to make the loading of the model to work properly.
     """
 
     def __init__(
@@ -43,9 +43,9 @@ class MPPISAC(SAC):
         self.mppi_action_dim = mppi_action_dim
         self.mppi_action_ub = mppi_action_ub
         self.mppi_action_lb = mppi_action_lb
-        self.mppi_model_in_dim = mppi_model_in_dim
-        self.mppi_model_out_dim = mppi_model_out_dim
-        self.mppi_h_units = mppi_h_units
+        self.mppi_model_in_dim = None if mppi_true_dynamics_model else mppi_model_in_dim
+        self.mppi_model_out_dim = None if mppi_true_dynamics_model else mppi_model_out_dim
+        self.mppi_h_units = None if mppi_true_dynamics_model else mppi_h_units
         self.mppi_state_preproc = mppi_state_preproc
         self.mppi_state_postproc = mppi_state_postproc
         self.mppi_target_proc = mppi_target_proc
@@ -54,7 +54,7 @@ class MPPISAC(SAC):
         self.mppi_horizon = mppi_horizon
         self.mppi_n_samples = mppi_n_samples
         self.mppi_lambda = mppi_lambda
-        self.mppi_train_epoch = mppi_train_epoch
+        self.mppi_train_epoch = None if mppi_true_dynamics_model else mppi_train_epoch
         self.mppi_true_dynamics_model = mppi_true_dynamics_model
 
         self.mppisac_coef = mppisac_coef
@@ -85,7 +85,12 @@ class MPPISAC(SAC):
         super()._setup_model()
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
-        print(f"Progress remaining: {self._current_progress_remaining}")
+        # TODO: use the info below to make a cosine schedule for mppisac_coef
+        # TODO: schedule can be a subclass of stable_baselines.common.schedules
+        # print(f"Progress remaining: {self._current_progress_remaining}")
+        # print(f"total_timesteps: {self._total_timesteps}")
+        # print(f"num timesteps: {self.num_timesteps}")
+        # print(f"learning starts: {self.learning_starts}")
         # Update optimizers learning rate
         optimizers = [self.actor.optimizer, self.critic.optimizer]
         if self.ent_coef_optimizer is not None:
