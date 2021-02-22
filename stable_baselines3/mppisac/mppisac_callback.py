@@ -1,5 +1,6 @@
 from stable_baselines3.common.logger import TensorBoardOutputFormat
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.vec_env import VecEnv
 
 
 class MPPISAC_TensorboardCallback(BaseCallback):
@@ -14,6 +15,9 @@ class MPPISAC_TensorboardCallback(BaseCallback):
 
     def _write_on_training_start(self):
         info = {
+            "Env": self.model.env.envs[0].unwrapped.__class__.__name__
+            if isinstance(self.model.env, VecEnv)
+            else self.model.env.unwrapped.__class__.__name__,
             "Batch_size": self.model.batch_size,
             "MPPI_use_true_dynamics": self.model.use_mppi_true_dynamics_model,
             "MPPI_h_units": self.model.mppi_h_units,
