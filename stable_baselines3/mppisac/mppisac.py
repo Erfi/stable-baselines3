@@ -176,7 +176,8 @@ class MPPISAC(SAC):
             # Mean over all critic networks
             q_values_pi = torch.cat(self.critic.forward(replay_data.observations, actions_pi), dim=1)
             min_qf_pi, _ = torch.min(q_values_pi, dim=1, keepdim=True)
-            mppisac_loss = F.mse_loss(min_qf_pi, actions_mb_q, reduction="none").mean()
+            mppisac_loss = F.mse_loss(min_qf_pi, actions_mb_q, reduction="none").mean()  # using qs
+            # mppisac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none").mean()  # using actions
             sac_actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
             actor_loss = sac_actor_loss + self.mppisac_coef * mppisac_loss
 

@@ -25,6 +25,8 @@ class MPPISAC_TensorboardCallback(BaseCallback):
             "MPPI_horizon": self.model.mppi_horizon,
             "MPPI_sigma": self.model.mppi_noise_sigma,
             "MPPI_lambda": self.model.mppi_lambda,
+            "MPPI_n_samples": self.model.mppi_n_samples,
+            "MPPISAC_coef": self.model.mppisac_coef,
         }
         self.tb_formatter.writer.add_text("MPPI Config", str(info), self.num_timesteps)
         self.tb_formatter.writer.flush()
