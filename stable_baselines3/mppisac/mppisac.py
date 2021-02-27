@@ -1,10 +1,11 @@
-from typing import Optional, Callable, List, Tuple
+from typing import Optional, Callable, List, Tuple, Union
 
 import numpy as np
 import torch
 from torch.nn import functional as F
 
 from stable_baselines3.common import logger
+from stable_baselines3.common.schedules import CosineSchedule
 from stable_baselines3.common.utils import polyak_update
 from stable_baselines3.sac import SAC
 from stable_baselines3.mppi import MPPICTRL
@@ -34,7 +35,7 @@ class MPPISAC(SAC):
         mppi_lambda: float = 1.0,
         mppi_train_epoch: int = 1,
         mppi_true_dynamics_model: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
-        mppisac_coef: float = 1.0,
+        mppisac_coef: Union[float, str] = 1.0,
         _init_setup_model: bool = True,
         *args,
         **kwargs,
@@ -58,6 +59,7 @@ class MPPISAC(SAC):
         self.mppi_true_dynamics_model = mppi_true_dynamics_model
 
         self.mppisac_coef = mppisac_coef
+        self.mppisac_coef_schedule = None
         self.use_mppi_true_dynamics_model = True if self.mppi_true_dynamics_model else False
 
         super().__init__(_init_setup_model=_init_setup_model, *args, **kwargs)
@@ -82,7 +84,16 @@ class MPPISAC(SAC):
             train_epoch=self.mppi_train_epoch,
             true_dynamics_model=self.mppi_true_dynamics_model,
         )
+        if isinstance(self.mppisac_coef, str):
+            self.mppisac_coef_schedule = self._create_mppisac_schedule()
+
         super()._setup_model()
+
+    def _create_mppisac_schedule(self):
+        assert isinstance(self.mppisac_coef, str) and self.mppisac_coef.startswith("auto") and "_" in self.mppisac_coef
+        initial_value = float(self.mppisac_coef.split("_")[1])
+        schedule = CosineSchedule(initial_value=initial_value)
+        return schedule
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
         # TODO: use the info below to make a cosine schedule for mppisac_coef
@@ -91,6 +102,14 @@ class MPPISAC(SAC):
         # print(f"total_timesteps: {self._total_timesteps}")
         # print(f"num timesteps: {self.num_timesteps}")
         # print(f"learning starts: {self.learning_starts}")
+
+        # Set mppisac coeficient (either constant or using schedule)
+        if isinstance(self.mppisac_coef, float):
+            mppisac_coef = self.mppisac_coef
+        else:
+            mppisac_coef = self.mppisac_coef_schedule.value(
+                step=self.num_timesteps - self.learning_starts, total_steps=self._total_timesteps
+            )
         # Update optimizers learning rate
         optimizers = [self.actor.optimizer, self.critic.optimizer]
         if self.ent_coef_optimizer is not None:
@@ -179,7 +198,7 @@ class MPPISAC(SAC):
             mppisac_loss = F.mse_loss(min_qf_pi, actions_mb_q, reduction="none").mean()  # using qs
             # mppisac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none").mean()  # using actions
             sac_actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
-            actor_loss = sac_actor_loss + self.mppisac_coef * mppisac_loss
+            actor_loss = sac_actor_loss + mppisac_coef * mppisac_loss
 
             actor_losses.append(actor_loss.item())
             mppisac_losses.append(mppisac_loss.item())
@@ -200,6 +219,7 @@ class MPPISAC(SAC):
         logger.record("train/actor_loss", np.mean(actor_losses))
         logger.record("train/critic_loss", np.mean(critic_losses))
         logger.record("train/mppi-sac_loss", np.mean(mppisac_losses))
+        logger.record("train/mppi-sac_coef", mppisac_coef)
         if len(ent_coef_losses) > 0:
             logger.record("train/ent_coef_loss", np.mean(ent_coef_losses))
 

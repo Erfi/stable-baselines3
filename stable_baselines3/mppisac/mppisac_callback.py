@@ -27,6 +27,7 @@ class MPPISAC_TensorboardCallback(BaseCallback):
             "MPPI_lambda": self.model.mppi_lambda,
             "MPPI_n_samples": self.model.mppi_n_samples,
             "MPPISAC_coef": self.model.mppisac_coef,
+            "seed": self.model.seed,
         }
         self.tb_formatter.writer.add_text("MPPI Config", str(info), self.num_timesteps)
         self.tb_formatter.writer.flush()
