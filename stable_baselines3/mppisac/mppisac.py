@@ -173,9 +173,9 @@ class MPPISAC(SAC):
                 # td error + entropy term
                 q_backup = replay_data.rewards + (1 - replay_data.dones) * self.gamma * target_q
 
-                # q(s, MPPI_action)
-                actions_mb_qs = torch.cat(self.critic_target(replay_data.observations, actions_mb), dim=1)
-                actions_mb_q, _ = torch.min(actions_mb_qs, dim=1, keepdim=True)
+                # q(s, MPPI_action) FOR USING DIFF Qs 
+                # actions_mb_qs = torch.cat(self.critic_target(replay_data.observations, actions_mb), dim=1)
+                # actions_mb_q, _ = torch.min(actions_mb_qs, dim=1, keepdim=True)
 
             # Get current Q estimates for each critic network
             # using action from the replay buffer
@@ -195,8 +195,8 @@ class MPPISAC(SAC):
             # Mean over all critic networks
             q_values_pi = torch.cat(self.critic.forward(replay_data.observations, actions_pi), dim=1)
             min_qf_pi, _ = torch.min(q_values_pi, dim=1, keepdim=True)
-            mppisac_loss = F.mse_loss(min_qf_pi, actions_mb_q, reduction="none").mean()  # using qs
-            # mppisac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none").mean()  # using actions
+            # mppisac_loss = F.mse_loss(min_qf_pi, actions_mb_q, reduction="none").mean()  # using qs
+            mppisac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none").mean()  # using actions
             sac_actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
             actor_loss = sac_actor_loss + mppisac_coef * mppisac_loss
 
