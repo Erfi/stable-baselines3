@@ -5,7 +5,7 @@ import torch
 from torch.nn import functional as F
 
 from stable_baselines3.common import logger
-from stable_baselines3.common.schedules import CosineSchedule
+from stable_baselines3.common.schedules import CosineSchedule, ConstantOneStep
 from stable_baselines3.common.utils import polyak_update
 from stable_baselines3.sac import SAC
 from stable_baselines3.mppi import MPPICTRL
@@ -90,19 +90,22 @@ class MPPISAC(SAC):
         super()._setup_model()
 
     def _create_mppisac_schedule(self):
-        assert isinstance(self.mppisac_coef, str) and self.mppisac_coef.startswith("auto") and "_" in self.mppisac_coef
-        initial_value = float(self.mppisac_coef.split("_")[1])
-        schedule = CosineSchedule(initial_value=initial_value)
+        assert (
+            isinstance(self.mppisac_coef, str)
+            and (self.mppisac_coef.startswith("cosine") or self.mppisac_coef.startswith("onestep"))
+            and "_" in self.mppisac_coef
+        )
+        components = self.mppisac_coef.strip().split("_")
+        initial_value = float(components[1])
+        scale = float(components[2]) if len(components) == 3 else 1.0
+
+        if components[0] == "cosine":
+            schedule = CosineSchedule(initial_value=initial_value, scale=scale)
+        elif components[0] == "onestep":
+            schedule = ConstantOneStep(initial_value=initial_value, scale=scale)
         return schedule
 
     def train(self, gradient_steps: int, batch_size: int) -> None:
-        # TODO: use the info below to make a cosine schedule for mppisac_coef
-        # TODO: schedule can be a subclass of stable_baselines.common.schedules
-        # print(f"Progress remaining: {self._current_progress_remaining}")
-        # print(f"total_timesteps: {self._total_timesteps}")
-        # print(f"num timesteps: {self.num_timesteps}")
-        # print(f"learning starts: {self.learning_starts}")
-
         # Set mppisac coeficient (either constant or using schedule)
         if isinstance(self.mppisac_coef, float):
             mppisac_coef = self.mppisac_coef
@@ -126,17 +129,19 @@ class MPPISAC(SAC):
             replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
 
             # train model based MPPICTRL dynamic model
-            self.mbctrl.train(
-                states=replay_data.observations, next_states=replay_data.next_observations, actions=replay_data.actions
-            )
+            if mppisac_coef > 0.0:
+                self.mbctrl.train(
+                    states=replay_data.observations,
+                    next_states=replay_data.next_observations,
+                    actions=replay_data.actions,
+                )
+                # MPPICTRL's suggested actions for observations
+                actions_mb = self.mbctrl.act(replay_data.observations)
+                actions_mb = self.policy.scale_action(actions_mb)
 
             # We need to sample because `log_std` may have changed between two gradient steps
             if self.use_sde:
                 self.actor.reset_noise()
-
-            # MPPICTRL's suggested actions for observations
-            actions_mb = self.mbctrl.act(replay_data.observations)
-            actions_mb = self.policy.scale_action(actions_mb)
 
             # Action by the current actor for the sampled state
             actions_pi, log_prob = self.actor.action_log_prob(replay_data.observations)
@@ -173,9 +178,10 @@ class MPPISAC(SAC):
                 # td error + entropy term
                 q_backup = replay_data.rewards + (1 - replay_data.dones) * self.gamma * target_q
 
-                # q(s, MPPI_action) FOR USING DIFF Qs 
-                # actions_mb_qs = torch.cat(self.critic_target(replay_data.observations, actions_mb), dim=1)
-                # actions_mb_q, _ = torch.min(actions_mb_qs, dim=1, keepdim=True)
+                # q(s, MPPI_action) FOR USING DIFF Qs
+                # if mppisac_coef > 0.0:
+                #     actions_mb_qs = torch.cat(self.critic_target(replay_data.observations, actions_mb), dim=1)
+                #     actions_mb_q, _ = torch.min(actions_mb_qs, dim=1, keepdim=True)
 
             # Get current Q estimates for each critic network
             # using action from the replay buffer
@@ -190,13 +196,17 @@ class MPPISAC(SAC):
             critic_loss.backward()
             self.critic.optimizer.step()
 
+            # Compute loss due to model based (MPPI)
+            if mppisac_coef > 0.0:
+                # mppisac_loss = F.mse_loss(min_qf_pi, actions_mb_q, reduction="none").mean()  # using qs
+                mppisac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none").mean()  # using actions
+            else:
+                mppisac_loss = torch.tensor(0.0)
             # Compute actor loss
             # Alternative: actor_loss = th.mean(log_prob - qf1_pi)
             # Mean over all critic networks
             q_values_pi = torch.cat(self.critic.forward(replay_data.observations, actions_pi), dim=1)
             min_qf_pi, _ = torch.min(q_values_pi, dim=1, keepdim=True)
-            # mppisac_loss = F.mse_loss(min_qf_pi, actions_mb_q, reduction="none").mean()  # using qs
-            mppisac_loss = F.mse_loss(actions_pi, actions_mb, reduction="none").mean()  # using actions
             sac_actor_loss = (ent_coef * log_prob - min_qf_pi).mean()
             actor_loss = sac_actor_loss + mppisac_coef * mppisac_loss
 
