@@ -98,7 +98,7 @@ class MPPICTRL(MBCTRL):
         if state.ndim == 1:
             return self.ctrl.command(state)
         actions = [self.ctrl.command(s) for s in state]
-        return torch.Tensor(actions).view(-1, self.action_dim)
+        return torch.stack(actions)
 
     def _create_dynamics_model(self):
         network = torch.nn.Sequential(

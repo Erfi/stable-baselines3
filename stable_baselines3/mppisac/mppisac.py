@@ -13,7 +13,7 @@ from stable_baselines3.mppi import MPPICTRL
 
 class MPPISAC(SAC):
     """
-    NOTE: Default values are set in order to make the loading of the model to work properly.
+    NOTE: Default values are set in order to make the (re)loading of the model work properly.
     """
 
     def __init__(
@@ -65,6 +65,9 @@ class MPPISAC(SAC):
         super().__init__(_init_setup_model=_init_setup_model, *args, **kwargs)
 
     def _setup_model(self) -> None:
+        # call super's setup_model first to set the random seeds
+        super()._setup_model()
+
         self.mbctrl = MPPICTRL(
             state_dim=self.mppi_state_dim,
             action_dim=self.mppi_action_dim,
@@ -86,8 +89,6 @@ class MPPISAC(SAC):
         )
         if isinstance(self.mppisac_coef, str):
             self.mppisac_coef_schedule = self._create_mppisac_schedule()
-
-        super()._setup_model()
 
     def _create_mppisac_schedule(self):
         assert (
